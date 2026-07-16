@@ -135,53 +135,47 @@ try:
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         elif os_name == 'Windows':
-            # 1. Resize gambar sesuai permintaan model TFLite (96x96)
+            # 1. Resize & Normalisasi Dasar (0.0 sampai 1.0)
             img_resized = cv2.resize(img_rgb, (model_width, model_height))
-            input_data = np.expand_dims(img_resized, axis=0)
+            img_normalized = img_resized.astype(np.float32) / 255.0
+            input_data = np.expand_dims(img_normalized, axis=0)
             
-            # 2. Cek tipe data yang diminta oleh model
+            # 2. Cek tipe data dan terapkan rumus kalibrasi (Quantization) bawaan model
             input_dtype = input_details[0]['dtype']
-
-            # 3. Konversi format gambar (UINT8 dari kamera) agar cocok dengan model
             if input_dtype == np.int8:
-                input_data = (input_data.astype(np.float32) - 128.0).astype(np.int8)
+                scale, zero_point = input_details[0]['quantization']
+                input_data = (input_data / scale) + zero_point
+                input_data = input_data.astype(np.int8)
             elif input_dtype == np.float32:
-                input_data = input_data.astype(np.float32) / 255.0
+                input_data = input_data.astype(np.float32)
 
-            # 4. Masukkan data ke model dan jalankan inferensi
+            # 3. Masukkan data ke model dan jalankan inferensi
             interpreter.set_tensor(input_details[0]['index'], input_data)
             interpreter.invoke()
             
-            # Hasil dari model FOMO berupa grid
+            # 4. Ambil hasil dan baca kalibrasi output
             output_data = interpreter.get_tensor(output_details[0]['index'])[0]
-            
-            # Grid model FOMO (contoh: 12x12). Kita memetakan skor ke ukuran frame asli
+            output_dtype = output_details[0]['dtype']
             grid_h, grid_w, num_classes = output_data.shape
             
-            # Edge Impulse FOMO memunculkan probabilitas objek per sel grid
+            # 5. Cari kotak deteksi (Bounding Box)
             for y in range(grid_h):
                 for x in range(grid_w):
-                    # Ambil nilai probabilitas MOP
-                    confidence = output_data[y, x, 1] if num_classes > 1 else output_data[y, x, 0]
+                    raw_score = output_data[y, x, 1] if num_classes > 1 else output_data[y, x, 0]
                     
-                    # TFLite int8 biasanya memiliki rentang -128 s.d 127 atau 0-255
-                    if output_details[0]['dtype'] == np.uint8 or output_details[0]['dtype'] == np.int8:
-                         # Sesuaikan konversi skor ke persen
-                         if output_details[0]['dtype'] == np.int8:
-                             score = (confidence + 128.0) / 255.0
-                         else:
-                             score = confidence / 255.0
+                    # Konversi skor mentah menjadi persentase probabilitas (0.0 - 1.0)
+                    if output_dtype == np.int8 or output_dtype == np.uint8:
+                        scale, zero_point = output_details[0]['quantization']
+                        score = (float(raw_score) - zero_point) * scale
                     else:
-                         score = confidence
+                        score = float(raw_score)
                          
                     if score > 0.8: # Threshold 80%
                         mouth_open_detected = True
                         
-                        # Hitung kordinat tengah kotak
                         cx = int((x + 0.5) / grid_w * frame_width)
                         cy = int((y + 0.5) / grid_h * frame_height)
                         
-                        # Gambar kotak (karena FOMO memprediksi pusat objek, kita gambar kotak statis)
                         box_size = 50 
                         cv2.rectangle(frame, (cx - box_size, cy - box_size), 
                                       (cx + box_size, cy + box_size), 
@@ -197,6 +191,7 @@ try:
             elif time.time() - start_time >= 2:
                 print("Perintah valid! Mengirim '1' ke STM32")
                 stm32.write(b'1')
+                stm_state = 1
                 is_timing = False # Reset timer
         else:
             is_timing = False     # Reset timer jika mulut tertutup sebelum 2 detik
