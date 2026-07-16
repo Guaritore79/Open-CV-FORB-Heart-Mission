@@ -18,7 +18,7 @@ if os_name == 'Linux':
         exit()
         
 elif os_name == 'Windows':
-    MODEL_PATH = "modelv4.lite" 
+    MODEL_PATH = "modelv5.lite" 
     try:
         # Menggunakan tflite_runtime atau tensorflow bawaan
         import tensorflow as tf
