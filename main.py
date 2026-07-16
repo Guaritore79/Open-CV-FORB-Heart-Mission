@@ -53,7 +53,7 @@ def pilih_port_manual():
             print("Input tidak valid! Harap masukkan angka.")
 
 PORT = pilih_port_manual()
-BAUDRATE = 9600
+BAUDRATE = 115200
 
 if not PORT:
     print("Program dihentikan karena tidak ada port yang dipilih.")
@@ -114,7 +114,7 @@ try:
         ret, frame = cap.read()
         if not ret:
             break
-        
+        frame = cv2.flip(frame, 1)
         frame_height, frame_width, _ = frame.shape
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mouth_open_detected = False
