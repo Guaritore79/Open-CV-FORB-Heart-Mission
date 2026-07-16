@@ -14,13 +14,12 @@ if os_name == 'Linux':
     try:
         from edge_impulse_linux.image import ImageImpulseRunner
     except Exception as e:
-        print(f"Gagal memuat library. Error aslinya: {e}") # <- Menampilkan error asli
+        print(f"Gagal memuat library. Error aslinya: {e}") 
         exit()
         
 elif os_name == 'Windows':
     MODEL_PATH = "modelv4.lite" 
     try:
-        # Menggunakan tflite_runtime atau tensorflow bawaan
         import tensorflow as tf
     except ImportError:
         print("Library tensorflow belum terinstall! Jalankan: pip install tensorflow")
@@ -87,7 +86,7 @@ elif os_name == 'Windows':
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
     
-    # Ambil resolusi input dari model (biasanya 96x96 untuk FOMO Edge Impulse)
+    # Ambil resolusi input dari model
     input_shape = input_details[0]['shape']
     model_height = input_shape[1]
     model_width = input_shape[2]
@@ -136,14 +135,20 @@ try:
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         elif os_name == 'Windows':
-            # Resize gambar sesuai permintaan model TFLite (96x96)
+            # 1. Resize gambar sesuai permintaan model TFLite (96x96)
             img_resized = cv2.resize(img_rgb, (model_width, model_height))
             input_data = np.expand_dims(img_resized, axis=0)
             
-            # Jika model int8 quantized, tidak perlu normalisasi ke float, langsung berikan uint8/int8
-            if input_details[0]['dtype'] == np.float32:
-                input_data = (np.float32(input_data) / 255.0)
-                
+            # 2. Cek tipe data yang diminta oleh model
+            input_dtype = input_details[0]['dtype']
+
+            # 3. Konversi format gambar (UINT8 dari kamera) agar cocok dengan model
+            if input_dtype == np.int8:
+                input_data = (input_data.astype(np.float32) - 128.0).astype(np.int8)
+            elif input_dtype == np.float32:
+                input_data = input_data.astype(np.float32) / 255.0
+
+            # 4. Masukkan data ke model dan jalankan inferensi
             interpreter.set_tensor(input_details[0]['index'], input_data)
             interpreter.invoke()
             
@@ -153,16 +158,19 @@ try:
             # Grid model FOMO (contoh: 12x12). Kita memetakan skor ke ukuran frame asli
             grid_h, grid_w, num_classes = output_data.shape
             
-            # Asumsi: kelas 1 adalah MOP (kelas 0 biasanya background di FOMO int8)
             # Edge Impulse FOMO memunculkan probabilitas objek per sel grid
             for y in range(grid_h):
                 for x in range(grid_w):
                     # Ambil nilai probabilitas MOP
                     confidence = output_data[y, x, 1] if num_classes > 1 else output_data[y, x, 0]
                     
-                    # TFLite int8 biasanya memiliki rentang 0-255, jika float rentang 0.0-1.0
+                    # TFLite int8 biasanya memiliki rentang -128 s.d 127 atau 0-255
                     if output_details[0]['dtype'] == np.uint8 or output_details[0]['dtype'] == np.int8:
-                         score = confidence / 255.0
+                         # Sesuaikan konversi skor ke persen
+                         if output_details[0]['dtype'] == np.int8:
+                             score = (confidence + 128.0) / 255.0
+                         else:
+                             score = confidence / 255.0
                     else:
                          score = confidence
                          
@@ -173,7 +181,7 @@ try:
                         cx = int((x + 0.5) / grid_w * frame_width)
                         cy = int((y + 0.5) / grid_h * frame_height)
                         
-                        # Gambar kotak (karena FOMO memprediksi pusat objek, bukan ukuran kotak penuh, kita gambar kotak statis)
+                        # Gambar kotak (karena FOMO memprediksi pusat objek, kita gambar kotak statis)
                         box_size = 50 
                         cv2.rectangle(frame, (cx - box_size, cy - box_size), 
                                       (cx + box_size, cy + box_size), 
